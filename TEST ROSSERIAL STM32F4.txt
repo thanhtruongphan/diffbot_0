@@ -1,0 +1,7 @@
+# FROM rosserial_test_f411
+code đã nạp vào STM32F4, thử rosserial ok~
+
+- thử diffbot_bringup.launch không còn lỗi, 
+chỉ hiện Warning: Emmergence STOP.
+
+- code chờ hỏi Franz, xin ý kiến từ anh.

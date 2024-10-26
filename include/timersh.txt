@@ -1,0 +1,9 @@
+#ifndef TIMERS_H
+#define TIMERS_H
+
+#include "main.h"  // Đảm bảo rằng tệp này có chứa định nghĩa của TIM_HandleTypeDef
+
+extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim5;
+
+#endif // TIMERS_H

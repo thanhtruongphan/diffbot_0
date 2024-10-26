@@ -1,0 +1,485 @@
+// #include "base_controller_mod_stm32.h"
+// #include <string>
+
+// namespace diffbot {
+
+//     BaseController::BaseController(ros::NodeHandle &nh)
+//         : nh_(nh)
+//         , htim_left_(&htim3)  // Sử dụng timer 3
+//         , htim_right_(&htim4) // Sử dụng timer 4
+//         , pwm_left_(0)
+//         , pwm_right_(0)
+//         , encoder_left_(nh, &htim2, ENCODER_RESOLUTION)
+//         , encoder_right_(nh, &htim5, ENCODER_RESOLUTION)
+//         , update_rate_(UPDATE_RATE_IMU, UPDATE_RATE_CONTROL, UPDATE_RATE_DEBUG)
+//         , last_update_time_(nh.now())
+//         , sub_reset_encoders_("reset", &BaseController::resetEncodersCallback, this)
+//         , sub_wheel_cmd_velocities_("wheel_cmd_velocities", &BaseController::commandCallback, this)
+//         , pub_encoders_("encoder_ticks", &encoder_msg_)
+//         , pub_measured_joint_states_("measured_joint_states", &msg_measured_joint_states_)
+//         , sub_pid_left_("pid_left", &BaseController::pidLeftCallback, this)
+//         , sub_pid_right_("pid_right", &BaseController::pidRightCallback, this)
+//         , motor_pid_left_(PWM_MIN, PWM_MAX, K_P_L, K_I_L, K_D_L)
+//         , motor_pid_right_(PWM_MIN, PWM_MAX, K_P_R, K_I_R, K_D_R)
+//     {}
+
+//     // Setup function to initialize the node
+//     void BaseController::setup() {
+//         nh_.initNode();
+//         nh_.loginfo("BaseController node initialized."); // Add this log message
+//         nh_.advertise(pub_encoders_);
+//         nh_.advertise(pub_measured_joint_states_);
+//         nh_.subscribe(sub_wheel_cmd_velocities_);
+//         nh_.subscribe(sub_reset_encoders_);
+//         nh_.subscribe(sub_pid_left_);
+//         nh_.subscribe(sub_pid_right_);
+//         HAL_TIM_PWM_Start(htim_left_, TIM_CHANNEL_1);
+//         HAL_TIM_PWM_Start(htim_right_, TIM_CHANNEL_1);
+//         // Wait until node is connected
+//         while (!nh_.connected()) {
+//             nh_.spinOnce();
+//         }
+//         nh_.loginfo("Connected to ROS Master."); // Add this log message
+//     }
+
+//     // Initialization of parameters
+//     void BaseController::init() {
+//         nh_.loginfo("Initializing parameters...");
+
+//         nh_.getParam("/diffbot/encoder_resolution", &this->encoder_resolution_);
+//         nh_.getParam("/diffbot/mobile_base_controller/wheel_radius", &wheel_radius_);
+//         nh_.getParam("/diffbot/mobile_base_controller/linear/x/max_velocity", &max_linear_velocity_);
+//         nh_.getParam("/diffbot/debug/base_controller", &debug_);
+
+//         encoder_left_.resolution(encoder_resolution_);
+//         encoder_right_.resolution(encoder_resolution_);
+
+//         // Reset encoders to 0
+//         std_msgs::Empty reset;
+//         this->resetEncodersCallback(reset);
+//         HAL_Delay(1);
+//         max_angular_velocity_ = max_linear_velocity_ / wheel_radius_;
+//         HAL_Delay(1000);
+//     }
+
+//     // Command callback to receive velocity commands for wheels
+//     void BaseController::commandCallback(const diffbot_msgs::WheelsCmdStamped& cmd_msg) {
+//         wheel_cmd_velocity_left_ = cmd_msg.wheels_cmd.angular_velocities.joint[0];
+//         wheel_cmd_velocity_right_ = cmd_msg.wheels_cmd.angular_velocities.joint[1];
+//         lastUpdateTime().command_received = nh_.now();
+//     }
+
+//     // Callback for resetting encoders
+//     void BaseController::resetEncodersCallback(const std_msgs::Empty& reset_msg) {
+//         encoder_left_.write(0);
+//         encoder_right_.write(0);
+//         nh_.loginfo("Reset both wheel encoders to zero");
+//     }
+
+//     // PID Callback for left motor
+//     void BaseController::pidLeftCallback(const diffbot_msgs::PIDStamped& pid_msg) {
+//         motor_pid_left_.updateConstants(pid_msg.pid.kp, pid_msg.pid.ki, pid_msg.pid.kd);
+//         nh_.loginfo("Set PID for left motor");
+//     }
+
+//     // PID Callback for right motor
+//     void BaseController::pidRightCallback(const diffbot_msgs::PIDStamped& pid_msg) {
+//         motor_pid_right_.updateConstants(pid_msg.pid.kp, pid_msg.pid.ki, pid_msg.pid.kd);
+//         nh_.loginfo("Set PID for right motor");
+//     }
+
+//     // Read function: Reads encoder values and publishes joint states
+//     void BaseController::read() {
+//         // Read the joint states from encoders
+//         joint_state_left_ = encoder_left_.jointState();
+//         joint_state_right_ = encoder_right_.jointState();
+
+//         // Update joint states message with position and velocity
+//         msg_measured_joint_states_.position[0] = joint_state_left_.angular_position_;
+//         msg_measured_joint_states_.position[1] = joint_state_right_.angular_position_;
+//         msg_measured_joint_states_.velocity[0] = joint_state_left_.angular_velocity_;
+//         msg_measured_joint_states_.velocity[1] = joint_state_right_.angular_velocity_;
+
+//         // Publish joint states
+//         pub_measured_joint_states_.publish(&msg_measured_joint_states_);
+
+//         // Read encoder tick counts
+//         ticks_left_ = encoder_left_.read();
+//         ticks_right_ = encoder_right_.read();
+
+//         encoder_msg_.encoders.ticks[0] = ticks_left_;
+//         encoder_msg_.encoders.ticks[1] = ticks_right_;
+//     }
+
+//     // Write function: Computes PID output and sends commands to the motor controller
+//     void BaseController::write() {
+//         // Calculate the motor command using PID for each wheel
+//         motor_cmd_left_ = motor_pid_left_.compute(wheel_cmd_velocity_left_, joint_state_left_.angular_velocity_);
+//         motor_cmd_right_ = motor_pid_right_.compute(wheel_cmd_velocity_right_, joint_state_right_.angular_velocity_);
+
+//         // Set motor speeds using the motor controller
+//         setMotorSpeedLeft(motor_cmd_left_);
+//         setMotorSpeedRight(motor_cmd_right_);
+//     }
+//     // Emergency stop
+//     void BaseController::eStop() {
+//         motor_cmd_left_ = 0;
+//         motor_cmd_right_ = 0;
+//         setMotorSpeedLeft(motor_cmd_left_);
+//         setMotorSpeedRight(motor_cmd_right_);
+//     }
+//     // Setup control motor PWM speed
+//     void BaseController::setMotorSpeedLeft(int left_speed) {
+//         pwm_left_ = left_speed;
+
+//         if (pwm_left_ > 0) {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+//             pwm_left_ = (pwm_left_ > 1000) ? 1000 : pwm_left_; // Limit the value to 1000 for PWM
+//         } else if (pwm_left_ < 0) {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+//             pwm_left_ = -pwm_left_; // Make the value positive
+//             pwm_left_ = (pwm_left_ > 1000) ? 1000 : pwm_left_; // Limit the value to 1000 for PWM
+//         } else {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+//             pwm_left_ = 0; // Set speed to 0 if input is 0
+//         }
+//         TIM3 -> CCR1 = pwm_left_; // Set the PWM value for Channel 1
+//     }
+//     void BaseController::setMotorSpeedRight(int right_speed) {
+//         pwm_right_ = right_speed;
+
+//         if (pwm_right_ > 0) {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+//             pwm_right_ = (pwm_right_ > 1000) ? 1000 : pwm_right_; // Limit the value to 1000 for PWM
+//         } else if (pwm_right_ < 0) {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+//             pwm_right_ = -pwm_right_; // Make the value positive
+//             pwm_right_ = (pwm_right_ > 1000) ? 1000 : pwm_right_; // Limit the value to 1000 for PWM
+//         } else {
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+//             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+//             pwm_right_ = 0; // Set speed to 0 if input is 0
+//         }
+//         TIM4 -> CCR1 = pwm_right_; // Set the PWM value for Channel 1
+//     }
+
+//     // Debugging function: Logs relevant data for motor commands and encoder readings
+//     void BaseController::printDebug() {
+//         // Formatted debug message for motor and encoder data
+//         std::string log_msg =
+//             std::string("\nRead:\n") +
+//             std::string("ticks_left_: ") + std::to_string(ticks_left_) +
+//             std::string("\nticks_right_: ") + std::to_string(ticks_right_) +
+//             std::string("\nmeasured_ang_vel_left: ") + std::to_string(joint_state_left_.angular_velocity_) +
+//             std::string("\nmeasured_ang_vel_right: ") + std::to_string(joint_state_right_.angular_velocity_) +
+//             std::string("\nwheel_cmd_velocity_left_: ") + std::to_string(wheel_cmd_velocity_left_) +
+//             std::string("\nwheel_cmd_velocity_right_: ") + std::to_string(wheel_cmd_velocity_right_) +
+//             std::string("\nWrite:\n") +
+//             std::string("motor_cmd_left_: ") + std::to_string(motor_cmd_left_) +
+//             std::string("\nmotor_cmd_right_: ") + std::to_string(motor_cmd_right_) +
+//             std::string("\npid_left_errors (p, i, d): ") + std::to_string(motor_pid_left_.proportional()) + " " + std::to_string(motor_pid_left_.integral()) + " " + std::to_string(motor_pid_left_.derivative()) +
+//             std::string("\npid_right_errors (p, i, d): ") + std::to_string(motor_pid_right_.proportional()) + " " + std::to_string(motor_pid_right_.integral()) + " " + std::to_string(motor_pid_right_.derivative());
+
+//         nh_.loginfo(log_msg.c_str());
+//     }
+    
+
+// }
+
+
+
+#include "base_controller_mod_stm32.h"
+#include <string>
+
+namespace diffbot {
+
+    BaseController::BaseController(ros::NodeHandle &nh)
+        : nh_(nh)
+        , htim_left_(&htim3)  // Sử dụng timer 3
+        , htim_right_(&htim4) // Sử dụng timer 4
+        , pwm_left_(0)
+        , pwm_right_(0)
+        , encoder_left_(nh, &htim2, ENCODER_RESOLUTION)
+        , encoder_right_(nh, &htim5, ENCODER_RESOLUTION)
+        , update_rate_(UPDATE_RATE_IMU, UPDATE_RATE_CONTROL, UPDATE_RATE_DEBUG)
+        , last_update_time_(nh.now())
+        , sub_reset_encoders_("reset", &BaseController::resetEncodersCallback, this)
+        , sub_wheel_cmd_velocities_("wheel_cmd_velocities", &BaseController::commandCallback, this)
+        , pub_encoders_("encoder_ticks", &encoder_msg_)
+        , pub_measured_joint_states_("measured_joint_states", &msg_measured_joint_states_)
+        , sub_pid_left_("pid_left", &BaseController::pidLeftCallback, this)
+        , sub_pid_right_("pid_right", &BaseController::pidRightCallback, this)
+        , sub_cmd_vel_("/cmd_vel", &BaseController::cmdVelCallback, this)
+        , motor_pid_left_(PWM_MIN, PWM_MAX, K_P_L, K_I_L, K_D_L)
+        , motor_pid_right_(PWM_MIN, PWM_MAX, K_P_R, K_I_R, K_D_R)
+    {}
+
+    // Setup function to initialize the node
+    void BaseController::setup() {
+        nh_.initNode();
+        // nh_.loginfo("BaseController node initialized."); // Add this log message
+        nh_.advertise(pub_encoders_);
+        nh_.advertise(pub_measured_joint_states_);
+        nh_.subscribe(sub_wheel_cmd_velocities_);
+        nh_.subscribe(sub_reset_encoders_);
+        nh_.subscribe(sub_pid_left_);
+        nh_.subscribe(sub_pid_right_);
+        nh_.subscribe(sub_cmd_vel_);  // Subscribe to /cmd_vel
+        
+        HAL_TIM_PWM_Start(htim_left_, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(htim_right_, TIM_CHANNEL_1);
+        // Wait until node is connected
+        while (!nh_.connected()) {
+            nh_.spinOnce();
+        }
+        // nh_.loginfo("Connected to ROS Master."); // Add this log message
+    }
+
+    // Initialization of parameters
+    void BaseController::init() {
+        nh_.loginfo("Initializing parameters...");
+
+        nh_.getParam("/diffbot/encoder_resolution", &this->encoder_resolution_);
+        nh_.getParam("/diffbot/mobile_base_controller/wheel_radius", &wheel_radius_);
+        nh_.getParam("/diffbot/mobile_base_controller/linear/x/max_velocity", &max_linear_velocity_);
+        nh_.getParam("/diffbot/debug/base_controller", &debug_);
+
+        encoder_left_.resolution(encoder_resolution_);
+        encoder_right_.resolution(encoder_resolution_);
+
+        // Reset encoders to 0
+        std_msgs::Empty reset;
+        this->resetEncodersCallback(reset);
+        HAL_Delay(1);
+        max_angular_velocity_ = max_linear_velocity_ / wheel_radius_;
+        HAL_Delay(1000);
+        
+        // nh_.loginfo("Get Parameters from Parameter Server");
+        // nh_.getParam("/diffbot/encoder_resolution", &this->encoder_resolution_);
+        // std::string log_msg = std::string("/diffbot/encoder_resolution: ") + std::to_string(encoder_resolution_);
+        // nh_.loginfo(log_msg.c_str());
+        // nh_.getParam("/diffbot/mobile_base_controller/wheel_radius", &wheel_radius_);
+        // log_msg = std::string("/diffbot/mobile_base_controller/wheel_radius: ") + std::to_string(wheel_radius_);
+        // nh_.loginfo(log_msg.c_str());
+        // nh_.getParam("/diffbot/mobile_base_controller/linear/x/max_velocity", &max_linear_velocity_);
+        // log_msg = std::string("/diffbot/mobile_base_controller/linear/x/max_velocity: ") + std::to_string(max_linear_velocity_);
+        // nh_.loginfo(log_msg.c_str());
+        // nh_.getParam("/diffbot/debug/base_controller", &debug_);
+        // log_msg = std::string("/diffbot/debug/base_controller: ") + std::to_string(debug_);
+        // nh_.loginfo(log_msg.c_str());
+
+        // nh_.loginfo("Initialize DiffBot Wheel Encoders");
+        // encoder_left_.resolution(encoder_resolution_);
+        // encoder_right_.resolution(encoder_resolution_);
+
+        // std_msgs::Empty reset;
+        // this->resetEncodersCallback(reset);
+        // HAL_Delay(1);
+
+        // max_angular_velocity_ = max_linear_velocity_ / wheel_radius_;
+
+        // HAL_Delay(1000);
+        
+    }
+
+    // Command callback to receive velocity commands for wheels
+    void BaseController::commandCallback(const diffbot_msgs::WheelsCmdStamped& cmd_msg) {
+        wheel_cmd_velocity_left_ = cmd_msg.wheels_cmd.angular_velocities.joint[0];
+        wheel_cmd_velocity_right_ = cmd_msg.wheels_cmd.angular_velocities.joint[1];
+        lastUpdateTime().command_received = nh_.now();
+    }
+
+    // Callback for resetting encoders
+    void BaseController::resetEncodersCallback(const std_msgs::Empty& reset_msg) {
+        encoder_left_.write(0);
+        encoder_right_.write(0);
+        nh_.loginfo("Reset both wheel encoders to zero");
+    }
+
+    // PID Callback for left motor
+    void BaseController::pidLeftCallback(const diffbot_msgs::PIDStamped& pid_msg) {
+        motor_pid_left_.updateConstants(pid_msg.pid.kp, pid_msg.pid.ki, pid_msg.pid.kd);
+        nh_.loginfo("Set PID for left motor");
+    }
+
+    // PID Callback for right motor
+    void BaseController::pidRightCallback(const diffbot_msgs::PIDStamped& pid_msg) {
+        motor_pid_right_.updateConstants(pid_msg.pid.kp, pid_msg.pid.ki, pid_msg.pid.kd);
+        nh_.loginfo("Set PID for right motor");
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////
+    void BaseController::cmdVelCallback(const geometry_msgs::Twist& cmd_vel_msg) {
+        // nh_.logwarn("Received /cmd_vel message, starting to process...");
+        // Extract linear and angular velocities from the message
+        float linear_vel = cmd_vel_msg.linear.x;
+        float angular_vel = cmd_vel_msg.angular.z;
+
+        nh_.loginfo(("Received linear: " + std::to_string(cmd_vel_msg.linear.x) + 
+                    ", angular: " + std::to_string(cmd_vel_msg.angular.z)).c_str());
+
+        // Compute left and right wheel velocities using differential drive equations
+        wheel_cmd_velocity_left_ = (linear_vel - (angular_vel * WHEEL_BASE / 2)) / wheel_radius_;
+        wheel_cmd_velocity_right_ = (linear_vel + (angular_vel * WHEEL_BASE / 2)) / wheel_radius_;
+
+        // Log the calculated wheel velocities (for debugging)
+        // nh_.loginfo("Received /cmd_vel. Updated wheel velocities.");
+
+        // Gọi các hàm điều khiển động cơ
+        setMotorSpeedLeft(wheel_cmd_velocity_left_);
+        setMotorSpeedRight(wheel_cmd_velocity_right_);
+        // nh_.logwarn("cmdVelCallback of subscribe to /cmd_vel...");
+        
+    }
+
+    // Read function: Reads encoder values and publishes joint states
+    void BaseController::read() {
+        // Read the joint states from encoders
+        joint_state_left_ = encoder_left_.jointState();
+        joint_state_right_ = encoder_right_.jointState();
+
+        // Update joint states message with position and velocity
+        msg_measured_joint_states_.position[0] = joint_state_left_.angular_position_;
+        msg_measured_joint_states_.position[1] = joint_state_right_.angular_position_;
+        msg_measured_joint_states_.velocity[0] = joint_state_left_.angular_velocity_;
+        msg_measured_joint_states_.velocity[1] = joint_state_right_.angular_velocity_;
+
+        // Publish joint states
+        pub_measured_joint_states_.publish(&msg_measured_joint_states_);
+
+        // Read encoder tick counts
+        ticks_left_ = encoder_left_.read();
+        ticks_right_ = encoder_right_.read();
+
+        encoder_msg_.encoders.ticks[0] = ticks_left_;
+        encoder_msg_.encoders.ticks[1] = ticks_right_;
+        // nh_.logwarn("read data from Encoder and update states...(01)");
+    }
+
+    // Write function: Computes PID output and sends commands to the motor controller
+    void BaseController::write() {
+        // Calculate the motor command using PID for each wheel
+        motor_cmd_left_ = motor_pid_left_.compute(wheel_cmd_velocity_left_, joint_state_left_.angular_velocity_);
+        motor_cmd_right_ = motor_pid_right_.compute(wheel_cmd_velocity_right_, joint_state_right_.angular_velocity_);
+
+        // Set motor speeds using the motor controller
+        setMotorSpeedLeft(motor_cmd_left_);
+        setMotorSpeedRight(motor_cmd_right_);
+        // nh_.logwarn("Write PID command to control motor...(01)");
+    }
+    // Emergency stop
+    void BaseController::eStop() {
+        motor_cmd_left_ = 0;
+        motor_cmd_right_ = 0;
+        setMotorSpeedLeft(motor_cmd_left_);
+        setMotorSpeedRight(motor_cmd_right_);
+    }
+    // // Setup control motor PWM speed
+    // void BaseController::setMotorSpeedLeft(int left_speed) {
+    //     pwm_left_ = left_speed;
+
+    //     if (pwm_left_ > 0) {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    //         pwm_left_ = (pwm_left_ > 1000) ? 1000 : pwm_left_; // Limit the value to 1000 for PWM
+    //     } else if (pwm_left_ < 0) {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+    //         pwm_left_ = -pwm_left_; // Make the value positive
+    //         pwm_left_ = (pwm_left_ > 1000) ? 1000 : pwm_left_; // Limit the value to 1000 for PWM
+    //     } else {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+    //         pwm_left_ = 0; // Set speed to 0 if input is 0
+    //     }
+    //     TIM3 -> CCR1 = pwm_left_; // Set the PWM value for Channel 1
+    // }
+    // void BaseController::setMotorSpeedRight(int right_speed) {
+    //     pwm_right_ = right_speed;
+
+    //     if (pwm_right_ > 0) {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+    //         pwm_right_ = (pwm_right_ > 1000) ? 1000 : pwm_right_; // Limit the value to 1000 for PWM
+    //     } else if (pwm_right_ < 0) {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+    //         pwm_right_ = -pwm_right_; // Make the value positive
+    //         pwm_right_ = (pwm_right_ > 1000) ? 1000 : pwm_right_; // Limit the value to 1000 for PWM
+    //     } else {
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+    //         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+    //         pwm_right_ = 0; // Set speed to 0 if input is 0
+    //     }
+    //     TIM4 -> CCR1 = pwm_right_; // Set the PWM value for Channel 1
+    // }
+    void BaseController::setMotorSpeedLeft(int left_speed) {
+        // Bảo đảm giá trị PWM là hợp lệ
+        if (left_speed > 1000) left_speed = 1000;
+        if (left_speed < -1000) left_speed = -1000;
+
+        // nh_.loginfo("Setting left motor PWM to: %d", left_speed);
+
+        if (left_speed >= 0) {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+        } else {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+            left_speed = -left_speed;  // Đảo ngược chiều
+        }
+
+        __HAL_TIM_SET_COMPARE(htim_left_, TIM_CHANNEL_1, left_speed); // Điều khiển PWM
+        // nh_.logwarn("Write PID command to control motor left...");
+    }
+
+    void BaseController::setMotorSpeedRight(int right_speed) {
+        // Tương tự như động cơ trái
+        if (right_speed > 1000) right_speed = 1000;
+        if (right_speed < -1000) right_speed = -1000;
+
+        // nh_.loginfo("Setting right motor PWM to: %d", right_speed);
+
+        if (right_speed >= 0) {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+        } else {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            right_speed = -right_speed;  // Đảo ngược chiều
+        }
+
+        __HAL_TIM_SET_COMPARE(htim_right_, TIM_CHANNEL_1, right_speed); // Điều khiển PWM
+        // nh_.logwarn("Write PID command to control motor right...");
+    }
+
+    // Debugging function: Logs relevant data for motor commands and encoder readings
+    void BaseController::printDebug() {
+        // Formatted debug message for motor and encoder data
+        // std::string log_msg =
+        //     std::string("\nRead:\n") +
+        //     std::string("ticks_left_: ") + std::to_string(ticks_left_) +
+        //     std::string("\nticks_right_: ") + std::to_string(ticks_right_) +
+        //     std::string("\nmeasured_ang_vel_left: ") + std::to_string(joint_state_left_.angular_velocity_) +
+        //     std::string("\nmeasured_ang_vel_right: ") + std::to_string(joint_state_right_.angular_velocity_) +
+        //     std::string("\nwheel_cmd_velocity_left_: ") + std::to_string(wheel_cmd_velocity_left_) +
+        //     std::string("\nwheel_cmd_velocity_right_: ") + std::to_string(wheel_cmd_velocity_right_) +
+        //     std::string("\nWrite:\n") +
+        //     std::string("motor_cmd_left_: ") + std::to_string(motor_cmd_left_) +
+        //     std::string("\nmotor_cmd_right_: ") + std::to_string(motor_cmd_right_) +
+        //     std::string("\npid_left_errors (p, i, d): ") + std::to_string(motor_pid_left_.proportional()) + " " + std::to_string(motor_pid_left_.integral()) + " " + std::to_string(motor_pid_left_.derivative()) +
+        //     std::string("\npid_right_errors (p, i, d): ") + std::to_string(motor_pid_right_.proportional()) + " " + std::to_string(motor_pid_right_.integral()) + " " + std::to_string(motor_pid_right_.derivative());
+
+        // nh_.loginfo(log_msg.c_str());
+    }
+    
+
+}
+
+
+

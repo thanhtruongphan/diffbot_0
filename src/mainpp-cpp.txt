@@ -1,0 +1,223 @@
+// #include <mainpp.h>
+// #include <ros.h>
+// #include <std_msgs/Empty.h>
+// #include <std_msgs/String.h>
+
+// // Node:
+// ros::NodeHandle nh;
+
+// // Publisher:
+// std_msgs::String str_msg;
+// ros::Publisher chatter("chatter", &str_msg);
+// char hello[] = "Hello world!";
+
+// // Subscriber:
+// void led_cb(const std_msgs::Empty &msg) {
+//   HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+// }
+// ros::Subscriber<std_msgs::Empty> led_sub("toggle_led", &led_cb);
+
+// // Setup node:
+// void setup(void) {
+//   nh.initNode();
+//   nh.advertise(chatter);
+//   nh.subscribe(led_sub);
+// }
+
+// // Loop:
+// void loop(void) {
+//   // Publish message:
+//   str_msg.data = hello;
+//   chatter.publish(&str_msg);
+
+//   nh.spinOnce();
+//   HAL_Delay(500);
+// }
+
+
+
+
+
+
+// #include <mainpp.h>
+// #include <ros.h>
+// #include <geometry_msgs/Twist.h>
+// #include <diffbot_msgs/EncodersStamped.h>
+
+// // NodeHandle for ROS
+// ros::NodeHandle nh;
+
+// // Motor control variables
+// int motor_cmd_left = 0;
+// int motor_cmd_right = 0;
+// extern TIM_HandleTypeDef htim3;
+// extern TIM_HandleTypeDef htim4;
+
+// // Function to handle cmd_vel messages (teleop_twist_keyboard)
+// void cmdVelCallback(const geometry_msgs::Twist &cmd_msg) {
+//     // Chuyển đổi từ giá trị vận tốc tuyến tính/ góc sang PWM cho động cơ trái và phải
+//     nh.loginfo("cmd vel callback");
+//     float linear_x = cmd_msg.linear.x;
+//     float angular_z = cmd_msg.angular.z;
+
+//     motor_cmd_left = static_cast<int>((linear_x - angular_z) * 1980);  // Tính toán cho động cơ trái
+//     motor_cmd_right = static_cast<int>((linear_x + angular_z) * 1980); // Tính toán cho động cơ phải
+// }
+
+// // Subscriber to cmd_vel topic
+// ros::Subscriber<geometry_msgs::Twist> sub_cmd_vel("/cmd_vel", &cmdVelCallback);
+
+
+// // Encoder message
+// diffbot_msgs::EncodersStamped encoder_msg;
+// ros::Publisher pub_encoders("encoder_ticks", &encoder_msg);
+
+// // Setup node
+// void setup(void) {
+
+//     nh.loginfo("setup...");
+//     // ROS node initialization
+//     nh.initNode();
+//     nh.subscribe(sub_cmd_vel);      // Subscribe to cmd_vel
+//     nh.advertise(pub_encoders);     // Advertise encoder topic
+// }
+
+// // Encoder reading function
+// void readEncoders() {
+//     // Đọc giá trị encoder cho động cơ 1 và 2
+//     nh.loginfo("read encoders ...");
+//     int ticks_left = __HAL_TIM_GET_COUNTER(&htim3);  // Đọc giá trị encoder từ timer3 cho động cơ 1
+//     int ticks_right = __HAL_TIM_GET_COUNTER(&htim4); // Đọc giá trị encoder từ timer4 cho động cơ 2
+
+//     // Cập nhật message encoder để gửi lên ROS
+//     encoder_msg.encoders.ticks[0] = ticks_left;
+//     encoder_msg.encoders.ticks[1] = ticks_right;
+
+//     // Gửi message encoder
+//     pub_encoders.publish(&encoder_msg);
+// }
+
+// // Motor control function
+// void controlMotors() {
+//     // Điều chỉnh tốc độ động cơ 1
+//     nh.loginfo("control motor...");
+//     // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, motor_cmd_left);  // PWM cho chân IN2
+
+//     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+//     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+//     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+//     TIM3 -> CCR1 = motor_cmd_left;
+//     // HAL_Delay(10);
+//     // Điều chỉnh tốc độ động cơ 2
+//     // __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, motor_cmd_right); // PWM cho chân IN4
+//     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+//     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+//     HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+//     TIM4 -> CCR1 = motor_cmd_right;
+//     // HAL_Delay(10);
+// }
+
+// // Main loop
+// void loop(void) {
+//     // Đọc giá trị từ encoder
+//     readEncoders();
+
+//     // Điều khiển động cơ dựa trên giá trị từ cmd_vel
+//     controlMotors();
+
+//     // Xử lý ROS
+//     nh.spinOnce();
+
+//     // Delay nhỏ để tránh quá tải CPU
+//     HAL_Delay(50);
+// }
+
+
+
+
+
+
+
+#include <ros.h>
+#include "base_controller.h"
+#include "l298_motor_driver.h"
+
+ros::NodeHandle nh;
+
+using namespace diffbot;
+
+// Create motor controller instances for left and right motors
+L298MotorController motor_controller_right(GPIOB, GPIO_PIN_12, GPIOB, GPIO_PIN_13, &htim3, TIM_CHANNEL_1);
+L298MotorController motor_controller_left(GPIOB, GPIO_PIN_14, GPIOB, GPIO_PIN_15, &htim4, TIM_CHANNEL_1);
+
+// Base controller using the L298 motor controller for left and right motors
+BaseController<L298MotorController> base_controller(nh, &motor_controller_left, &motor_controller_right);
+
+void setup() 
+{
+    // Initialize the base controller
+    base_controller.setup();
+    base_controller.init();
+
+    // Log setup information
+    nh.loginfo("Initialize DiffBot Motor Controllers");
+    motor_controller_left.setSpeed(0); // Ensure motors are stopped at startup
+    motor_controller_right.setSpeed(0);
+    nh.loginfo("Setup finished");
+}
+
+void loop()
+{
+    static bool imu_is_initialized = false;
+
+    // Main control loop for the base controller
+    ros::Duration command_dt = nh.now() - base_controller.lastUpdateTime().control;
+    if (command_dt.toSec() >= ros::Duration(1.0 / base_controller.publishRate().control_, 0).toSec())
+    {
+        base_controller.read();  // Read encoder values
+        base_controller.write(); // Write motor commands
+        base_controller.lastUpdateTime().control = nh.now();
+    }
+
+    // Emergency stop if no command is received for a defined duration
+    command_dt = nh.now() - base_controller.lastUpdateTime().command_received;
+    if (command_dt.toSec() >= ros::Duration(E_STOP_COMMAND_RECEIVED_DURATION, 0).toSec())
+    {
+        nh.logwarn("Emergency STOP");
+        base_controller.eStop();
+    }
+
+    // Publish IMU data if IMU is initialized, else log failure
+    ros::Duration imu_dt = nh.now() - base_controller.lastUpdateTime().imu;
+    if (imu_dt.toSec() >= base_controller.publishRate().period().imu_)
+    {
+        if (!imu_is_initialized)
+        {
+            // Example IMU initialization logic
+            // imu_is_initialized = initIMU();
+            if(imu_is_initialized)
+                nh.loginfo("IMU Initialized");
+            else
+                nh.logfatal("IMU failed to initialize. Check your IMU connection.");
+        }
+        else
+        {
+            //publishIMU(); // Publish IMU data if initialized
+        }
+        base_controller.lastUpdateTime().imu = nh.now();
+    }
+
+    // Display encoder readings if in debug mode
+    if(base_controller.debug())
+    {
+        ros::Duration debug_dt = nh.now() - base_controller.lastUpdateTime().debug;
+        if (debug_dt.toSec() >= base_controller.publishRate().period().debug_)
+        {
+            base_controller.printDebug();
+            base_controller.lastUpdateTime().debug = nh.now();
+        }
+    }
+
+    // Call all the callbacks
+    nh.spinOnce();
+}
